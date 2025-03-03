@@ -1,0 +1,147 @@
+% Load MNIST data from image file
+A = imread("MnistExamples.png");
+AGray = mean(A,3); % Convert to grayscale
+
+% Define the dimensions and spacing of the digit images in the file
+firstRow = 12; firstCol = 28; lastRow = 38; lastCol = 55;
+dataRowNum = 28; dataColNum = 27;
+xSpace = 8*ones(1,16); xSpace([3,7,11,15]) = xSpace([3,7,11,15])+1;
+ySpace = 5*ones(1,10); ySpace(5) = ySpace(5)+1;
+
+totalAngkaGab = [];
+
+% Extract digit images
+for kk = 1:10
+    angkaGab = [];
+    for ii = 1:16
+        angkaTemp = AGray(firstRow:lastRow, firstCol:lastCol);
+        firstCol = firstCol + xSpace(ii) + dataColNum;
+        lastCol = lastCol + xSpace(ii) + dataColNum;
+        angkaGab = cat(3, angkaGab, angkaTemp);
+    end
+    totalAngkaGab = cat(4, totalAngkaGab, angkaGab);
+    firstRow = firstRow + ySpace(kk) + dataRowNum;
+    firstCol = 28; lastRow = lastRow + ySpace(kk) + dataRowNum; lastCol = 55;
+end
+
+% Prepare data for training
+numDigits = size(totalAngkaGab, 4);
+numExamples = size(totalAngkaGab, 3) * numDigits;
+data = reshape(totalAngkaGab, [dataRowNum*dataColNum, numExamples]);
+data = double(data) / 255; % Normalize data to [0, 1]
+labels = repmat(0:9, [size(totalAngkaGab, 3), 1]);
+labels = labels(:);
+
+% Split data into training and test sets
+trainRatio = 0.8;
+numTrainExamples = round(numExamples * trainRatio);
+numTestExamples = numExamples - numTrainExamples;
+randIndices = randperm(numExamples);
+trainData = data(:, randIndices(1:numTrainExamples));
+trainLabels = labels(randIndices(1:numTrainExamples));
+testData = data(:, randIndices(numTrainExamples+1:end));
+testLabels = labels(randIndices(numTrainExamples+1:end));
+
+% Convert labels to one-hot encoding
+trainLabels_one_hot = full(ind2vec(trainLabels' + 1));
+testLabels_one_hot = full(ind2vec(testLabels' + 1));
+
+% ANN architecture
+inputSize = dataRowNum * dataColNum; % 784 for MNIST
+hiddenLayerSize = [128, 64]; % Example sizes
+outputSize = 10; % 10 classes for digits 0-9
+
+% Initialize weights and biases
+weights = {
+    rand(hiddenLayerSize(1), inputSize) - 0.5, 
+    rand(hiddenLayerSize(2), hiddenLayerSize(1)) - 0.5, 
+    rand(outputSize, hiddenLayerSize(2)) - 0.5
+};
+biases = {
+    rand(hiddenLayerSize(1), 1) - 0.5, 
+    rand(hiddenLayerSize(2), 1) - 0.5, 
+    rand(outputSize, 1) - 0.5
+};
+
+% Training parameters
+learningRate = 0.01;
+epochs = 1000; % can be adjusted based on experimentation
+
+% Assuming sigmoid as the activation function
+sigmoid = @(z) 1.0 ./ (1.0 + exp(-z));
+sigmoid_prime = @(z) sigmoid(z) .* (1 - sigmoid(z)); % Derivative of sigmoid
+cross_entropy_loss = @(y, y_hat) -sum(y .* log(y_hat) + (1 - y) .* log(1 - y_hat)); % Loss function
+
+% Before the training loop
+trainLosses = [];
+testAccuracies = [];
+tic; % Start timing the training phase
+
+% Training loop
+for epoch = 1:epochs
+    % Shuffle data and labels together for each epoch
+    idx = randperm(numTrainExamples);
+    shuffledData = trainData(:, idx);
+    shuffledLabels = trainLabels_one_hot(:, idx);
+    
+    total_loss = 0;
+    
+    for i = 1:numTrainExamples
+        % Forward propagation
+        a1 = sigmoid(weights{1} * shuffledData(:, i) + biases{1});
+        a2 = sigmoid(weights{2} * a1 + biases{2});
+        output = sigmoid(weights{3} * a2 + biases{3});
+        
+        % Calculate error (loss)
+        loss = cross_entropy_loss(shuffledLabels(:, i), output);
+        total_loss = total_loss + loss;
+        
+        % Backpropagation
+        delta3 = output - shuffledLabels(:, i);
+        delta2 = (weights{3}' * delta3) .* sigmoid_prime(weights{2} * a1 + biases{2});
+        delta1 = (weights{2}' * delta2) .* sigmoid_prime(weights{1} * shuffledData(:, i) + biases{1});
+        
+        % Update weights and biases
+        weights{3} = weights{3} - learningRate * delta3 * a2';
+        biases{3} = biases{3} - learningRate * delta3;
+        
+        weights{2} = weights{2} - learningRate * delta2 * a1';
+        biases{2} = biases{2} - learningRate * delta2;
+        
+        weights{1} = weights{1} - learningRate * delta1 * shuffledData(:, i)';
+        biases{1} = biases{1} - learningRate * delta1;
+    end
+    
+    % Store loss and calculate training accuracy
+    if mod(epoch, 100) == 0
+        trainLosses = [trainLosses, total_loss / numTrainExamples];
+        disp(['Epoch ', num2str(epoch), ': Loss = ', num2str(total_loss / numTrainExamples)]);
+    end
+end
+
+% After the training loop
+trainingTime = toc; % End timing the training phase
+disp(['Training time: ', num2str(trainingTime), ' seconds.']);
+
+% Evaluation on test set
+correct_predictions = 0;
+for i = 1:numTestExamples
+    a1 = sigmoid(weights{1} * testData(:, i) + biases{1});
+    a2 = sigmoid(weights{2} * a1 + biases{2});
+    output = sigmoid(weights{3} * a2 + biases{3});
+    
+    [~, predicted_class] = max(output);
+    if predicted_class == testLabels(i) + 1 % MATLAB indexing starts at 1
+        correct_predictions = correct_predictions + 1;
+    end
+end
+
+accuracy = correct_predictions / numTestExamples;
+disp(['Test set accuracy: ', num2str(accuracy)]);
+
+% Plotting loss over epochs
+figure;
+plot(1:100:numel(trainLosses)*100, trainLosses);
+title('Training Loss over Epochs');
+xlabel('Epoch');
+ylabel('Loss');
